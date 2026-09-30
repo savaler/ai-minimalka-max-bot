@@ -41,6 +41,18 @@ async function handle(update) {
   if (update.update_type !== "message_created") return;
 
   const message = update.message;
+  if (
+  message?.recipient?.chat_type === "dialog" &&
+  message.sender &&
+  !message.sender.is_bot &&
+  message.link?.type === "forward" &&
+  message.link.chat_id != null
+) {
+  await api("/messages?user_id=" + message.sender.user_id, {
+    text: "ID источника пересланного поста: " + message.link.chat_id
+  });
+  return;
+}
   if (message?.recipient?.chat_type !== "dialog") return;
   if (!message.sender || message.sender.is_bot) return;
 
