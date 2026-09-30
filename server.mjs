@@ -34,25 +34,134 @@ function authorized(value) {
     timingSafeEqual(actual, expected);
 }
 
-// Защита от повторной обработки в пределах текущего запуска.
+const CHANNEL_ID = "-78856061819466";
+const CHANNEL_URL = "https://" + "max.ru/channel_ai_minimalka";
+const pdfToken = process.env.PDF_FILE_TOKEN?.trim();
+
+const GIFT = "🎁 ЗАБРАТЬ ПОДАРОК";
+const CHECK = "✅ ПРОВЕРИТЬ ПОДПИСКУ";
+const MENU = "🏠 МЕНЮ";
+
 const handled = new Map();
+
+function keyboard(checkSubscription = false) {
+  return {
+    type: "inline_keyboard",
+    payload: {
+      buttons: [
+        [{
+          type: "message",
+          text: checkSubscription ? CHECK : GIFT
+        }],
+        [{
+          type: "link",
+          text: "📣 ОТКРЫТЬ КАНАЛ",
+          url: CHANNEL_URL
+        }],
+        [{
+          type: "message",
+          text: MENU
+        }]
+      ]
+    }
+  };
+}
+
+function send(userId, text, attachments = []) {
+  return api("/messages?user_id=" + userId, {
+    text,
+    attachments
+  });
+}
+
+async function showMenu(userId) {
+  await send(
+    userId,
+    "Привет! 🤖 Это «AI на минималках».\n\n" +
+    "Здесь можно забрать подарок — PDF с 15 готовыми промптами " +
+    "для жизни, работы и повседневных задач.\n\n" +
+    "Подпишись на канал и нажми «🎁 ЗАБРАТЬ ПОДАРОК».\n\n" +
+    "ПОНЯЛ • ПРИНЯЛ • ПОВТОРИЛ",
+    [keyboard()]
+  );
+}
+
+async function giveGift(userId) {
+  if (!pdfToken) {
+    console.error("Не настроен PDF_FILE_TOKEN.");
+    await send(
+      userId,
+      "Подарок пока недоступен. Попробуй немного позже.",
+      [keyboard()]
+    );
+    return;
+  }
+
+  let subscribed;
+
+  try {
+    const result = await api(
+      "/chats/" + CHANNEL_ID +
+      "/members?user_ids=" + encodeURIComponent(String(userId))
+    );
+
+    if (!Array.isArray(result.members)) {
+      throw new Error("Неожиданный формат ответа о подписке.");
+    }
+
+    subscribed = result.members.some(
+      member => String(member.user_id) === String(userId)
+    );
+  } catch (error) {
+    console.error("Проверка подписки:", error.message);
+    await send(
+      userId,
+      "Не получилось проверить подписку. " +
+      "Попробуй нажать кнопку проверки чуть позже.",
+      [keyboard(true)]
+    );
+    return;
+  }
+
+  if (!subscribed) {
+    await send(
+      userId,
+      "🎁 Подарок — для подписчиков нашего канала.\n\n" +
+      "1. Нажми «📣 ОТКРЫТЬ КАНАЛ» и подпишись.\n" +
+      "2. Вернись сюда и нажми «✅ ПРОВЕРИТЬ ПОДПИСКУ».",
+      [keyboard(true)]
+    );
+    return;
+  }
+
+  try {
+    await send(
+      userId,
+      "Держи подарок! 🎁\n\n" +
+      "15 готовых промптов: выбирай задачу, копируй и пробуй.\n" +
+      "Первый результат ближе, чем кажется 😉\n\n" +
+      "ПОНЯЛ • ПРИНЯЛ • ПОВТОРИЛ",
+      [
+        { type: "file", payload: { token: pdfToken } },
+        keyboard()
+      ]
+    );
+    console.log("PDF отправлен подписчику.");
+  } catch (error) {
+    console.error("Отправка PDF:", error.message);
+    await send(
+      userId,
+      "Подписка подтверждена ✅\n" +
+      "Но отправить PDF сейчас не получилось. Попробуй ещё раз чуть позже.",
+      [keyboard()]
+    );
+  }
+}
 
 async function handle(update) {
   if (update.update_type !== "message_created") return;
 
   const message = update.message;
-  if (
-  message?.recipient?.chat_type === "dialog" &&
-  message.sender &&
-  !message.sender.is_bot &&
-  message.link?.type === "forward" &&
-  message.link.chat_id != null
-) {
-  await api("/messages?user_id=" + message.sender.user_id, {
-    text: "ID источника пересланного поста: " + message.link.chat_id
-  });
-  return;
-}
   if (message?.recipient?.chat_type !== "dialog") return;
   if (!message.sender || message.sender.is_bot) return;
 
@@ -64,32 +173,21 @@ async function handle(update) {
     return;
   }
 
-  const task = api(
-    "/messages?user_id=" + message.sender.user_id,
-    {
-      text:
-        "Привет! 🤖 Я бот канала «AI на минималках».\n\n" +
-        "Подключение работает! Подарки и меню скоро появятся здесь.\n" +
-        "А пока загляни в наш канал 👇\n\n" +
-        "ПОНЯЛ • ПРИНЯЛ • ПОВТОРИЛ",
-      attachments: [{
-        type: "inline_keyboard",
-        payload: {
-          buttons: [[{
-            type: "link",
-            text: "📣 ОТКРЫТЬ КАНАЛ",
-            url: "https://" + "max.ru/channel_ai_minimalka"
-          }]]
-        }
-      }]
+  const userId = message.sender.user_id;
+  const text = message.body?.text?.trim() || "";
+
+  const task = (async () => {
+    if ([GIFT, CHECK, "/gift"].includes(text)) {
+      await giveGift(userId);
+    } else {
+      await showMenu(userId);
     }
-  );
+  })();
 
   handled.set(id, task);
 
   try {
     await task;
-    console.log("Ответ отправлен.");
   } catch (error) {
     handled.delete(id);
     throw error;
@@ -99,7 +197,6 @@ async function handle(update) {
     handled.delete(handled.keys().next().value);
   }
 }
-
 const bot = await api("/me");
 console.log("MAX подключён:", bot.first_name);
 
