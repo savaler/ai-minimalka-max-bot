@@ -274,8 +274,6 @@ export function createBot({ token, secret, pdfToken, fetchImpl = fetch }) {
   return { handle, api, authorized };
 }
 
-export function createServer(bot) {
- 
 function secureEqual(provided, expected) {
   if (!expected || !provided) return false;
 
