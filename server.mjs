@@ -275,36 +275,147 @@ export function createBot({ token, secret, pdfToken, fetchImpl = fetch }) {
 }
 
 export function createServer(bot) {
+ 
+function secureEqual(provided, expected) {
+  if (!expected || !provided) return false;
+
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(String(expected));
+
+  return a.length === b.length &&
+    timingSafeEqual(a, b);
+}
+
+export function createServer(
+  bot,
+  analyticsSecret = process.env.ANALYTICS_SECRET?.trim()
+) {
   const server = http.createServer(async (request, response) => {
-    const reply = (status, text) => {
+
+    const reply = (status, message) => {
       if (response.writableEnded) return;
-      response.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
-      response.end(text);
+
+      response.writeHead(status, {
+        'Content-Type': 'text/plain; charset=utf-8'
+      });
+
+      response.end(message);
     };
-    if (request.method === 'GET' && request.url === '/') return reply(200, 'AI на минималках: сервер работает. Версия 3.');
-    if (request.method !== 'POST' || request.url !== '/webhook') return reply(404, 'Not found');
-    if (!bot.authorized(request.headers['x-max-bot-api-secret'])) return reply(403, 'Forbidden');
+
+    // Проверка работоспособности сервера
+    if (request.method === 'GET' && request.url === '/') {
+      return reply(
+        200,
+        'AI на минималках: сервер работает. Версия 3.'
+      );
+    }
+
+    // Защищённый маршрут аналитики MAX
+    if (
+      request.method === 'GET' &&
+      request.url === '/analytics/max-count'
+    ) {
+      if (!analyticsSecret) {
+        return reply(503, 'Analytics not configured');
+      }
+
+      if (!secureEqual(
+        request.headers['x-analytics-secret'],
+        analyticsSecret
+      )) {
+        return reply(403, 'Forbidden');
+      }
+
+      try {
+        const channelId = '-78856061819466';
+
+        const result = await bot.api(
+          '/chats/' + encodeURIComponent(channelId)
+        );
+
+        const count = result?.participants_count;
+
+        if (!Number.isSafeInteger(count) || count < 0) {
+          return reply(502, 'Count unavailable');
+        }
+
+        response.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store'
+        });
+
+        return response.end(JSON.stringify({
+          platform: 'MAX',
+          subscribers: count
+        }));
+
+      } catch (error) {
+        console.error(
+          'MAX analytics request failed:',
+          error?.message || 'unknown'
+        );
+
+        return reply(502, 'MAX API unavailable');
+      }
+    }
+
+    // Существующий вебхук MAX
+    if (
+      request.method !== 'POST' ||
+      request.url !== '/webhook'
+    ) {
+      return reply(404, 'Not found');
+    }
+
+    // Проверка секретного заголовка вебхука
+    if (!bot.authorized(
+      request.headers['x-max-bot-api-secret']
+    )) {
+      return reply(403, 'Forbidden');
+    }
+
     try {
       const chunks = [];
       let size = 0;
+
       for await (const chunk of request) {
         size += chunk.length;
-        if (size > 262144) return reply(413, 'Payload too large');
+
+        if (size > 262144) {
+          return reply(413, 'Payload too large');
+        }
+
         chunks.push(chunk);
       }
+
       let update;
-      try { update = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-      catch { return reply(400, 'Invalid JSON'); }
+
+      try {
+        update = JSON.parse(
+          Buffer.concat(chunks).toString('utf8')
+        );
+      } catch {
+        return reply(400, 'Invalid JSON');
+      }
+
       await bot.handle(update);
       reply(200, 'OK');
+
     } catch (error) {
-      console.error('Ошибка обработки:', error.message);
+      console.error(
+        'Ошибка обработки:',
+        error.message
+      );
+
       reply(503, 'Retry later');
     }
   });
+
   server.requestTimeout = 20000;
+
   return server;
 }
+
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const bot = createBot({
