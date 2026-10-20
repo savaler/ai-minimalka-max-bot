@@ -1,5 +1,6 @@
 
 import http from 'node:http';
+import { handlePublishDryRun } from './internal-publish-dry-run.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
@@ -831,6 +832,11 @@ export function createServer(
           200,
           'AI на минималках: сервер работает. Версия 3.'
         );
+      }
+
+      // Isolated test route: never publishes to MAX.
+      if (request.url === '/internal/publish') {
+        return handlePublishDryRun(request, response);
       }
 
       // Защищённый маршрут статистики MAX.
