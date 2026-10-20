@@ -1,0 +1,23 @@
+name: MAX publish dry-run tests
+on:
+  push:
+    branches: [feature/cloudflare-publish-dry-run]
+  pull_request:
+    paths:
+      - 'server.mjs'
+      - 'internal-publish-dry-run.mjs'
+      - 'internal-publish-dry-run.test.mjs'
+      - '.github/workflows/max-publish-dry-run.yml'
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check server.mjs
+      - run: node --check internal-publish-dry-run.mjs
+      - run: node --test internal-publish-dry-run.test.mjs
